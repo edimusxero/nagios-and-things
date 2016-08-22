@@ -5,17 +5,36 @@
 use warnings;
 use strict;
 
-my ($opt_a,$tc_home,$opt_b,$monitor_version) = @ARGV;
+my $file_check = 1;
+my $version;
 
-if (!$opt_a or $opt_a ne '-d' or !$tc_home or !$opt_b or $opt_b ne '-v' or !$monitor_version or $monitor_version !~ /6.0|7.0|8.0|8.5|9.0/){
-    &usage();
+my ($opt_a,$opt_b) = @ARGV;
+
+if (not defined $opt_a){
+    &usage(2);
 }
-
+elsif($opt_a eq '-v'){
+    if(not defined $opt_b){
+        print "Version Number Required With This Option\n";
+        &usage(1);
+    }
+    $file_check = 0;
+}
+elsif($opt_a eq '-d' and not defined $opt_b){
+    print "Tomcat Home Required With This Option\n";
+    &usage(1);
+}
+elsif($opt_a !~ /-d|-v/){
+    &usage(2);
+}
+   
 $ENV{'PATH'} = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 
-###
+#####
+#
 # These are all the prerequisites for the script to run, it will install anything missing at the time of execution.  Currently has only been tested on CentOS 6.8
-###
+#
+#####
 
 my @req = qw(perl-libwww-perl perl-CPAN.x86_64 libgcc.x86_64 curl gcc);
 my @perl = qw(LWP::Simple);
@@ -25,6 +44,28 @@ foreach my $p (@req){
     if($stat == 2){
         system("yum install $p -y &>/dev/null");
     }
+}
+
+if ($file_check == 1){
+    my $file = "$opt_b/RELEASE-NOTES";
+    
+    if(! -e $file){
+        print "RELEASE-NOTES do not appear to exist, please include full version you are monitoring using the -v switch\n";
+        exit 3;
+    }
+
+    open(my $fh, "<$file") or die "Failed to open file!: $!\n";
+
+    while (my $fline = <$fh>){
+        if(($version) = $fline =~ /Apache Tomcat Version (\d.+)/g){
+            last;
+        }
+    }
+    
+    close($fh);
+}
+else {
+    $version = $opt_b;
 }
 
 chomp(my $cpan = `which cpanm &>/dev/null && echo '1' || echo '2'`);
@@ -43,16 +84,7 @@ foreach my $x (@perl){
 
 ###
 
-chomp(my $version = `ls -l $tc_home | grep \'^d\'| egrep \'apache-tomcat-$monitor_version\' | tail -n 1 | awk \'{print \$9}\'`);
-
-if(!$version){
-    print "This system does not appear to be running version - $monitor_version\n";
-    exit 1;
-}
-
-my ($sysVersion) = $version =~ /apache-tomcat-(\d.+)/;
-
-my ($subversion,$prefix) = $sysVersion =~ /^((\d+)\.\d+).+$/;
+my ($subversion,$prefix) = $version =~ /^((\d+)\.\d+).+$/;
 
 my $url = "http://tomcat.apache.org/download-${prefix}0.cgi";
 my @html = split("\n",get($url));
@@ -64,8 +96,8 @@ if(!$WebVersion){
     exit 3;
 }
 
-if ($sysVersion eq $WebVersion){
-    print "OK: No Updates Available\nCurrent Version - $sysVersion\n";
+if ($version eq $WebVersion){
+    print "OK: No Updates Available\nCurrent Version - $version\n";
     exit 0;
 }
 
@@ -75,11 +107,11 @@ my @security = split("\n",get($secUrl));
 my ($SecurityUpdateAvailable) = &CheckSecurity($WebVersion,\@security);
 
 if($SecurityUpdateAvailable){
-    print "CRITICAL: Security Update Available\nSystem Version - $sysVersion\nUpdate Version - $WebVersion\n";
+    print "CRITICAL: Security Update Available\nSystem Version - $version\nUpdate Version - $WebVersion\n";
     exit 2;
 }
-elsif(!$SecurityUpdateAvailable and $WebVersion ne $sysVersion){
-    print "WARNING: Update Available\nSystem Version - $sysVersion\nUpdate Version - $WebVersion\n";
+elsif(!$SecurityUpdateAvailable and $WebVersion ne $version){
+    print "WARNING: Update Available\nSystem Version - $version\nUpdate Version - $WebVersion\n";
     exit 1;
 }
 else{
@@ -94,7 +126,7 @@ sub TomcatCurrentVersion{
     my ($ver);
     
     foreach my $line (@$update){
-        if(($ver) = $line =~ /id="($sub\.\d.+)"/){
+        if(($ver) = $line =~ /id="($sub.+?)(\/|")/){
             last;
         }
     } 
@@ -116,7 +148,14 @@ sub CheckSecurity{
  }
 
  sub usage{
-    print "Invalid Operation\n";
-    print "Usage: $0 -d <tomcat home> -v <tomcat version> (versions need to be full version like 7.0, 8.5, 9.0 etc)\n";
+    my $mes = shift;
+    
+    if($mes == 1){
+        print "Invalid Operation\n";
+    }
+    elsif($mes == 2){
+        print "Switch Required To Operate (-d to define tomcat path or -v to define a particular version number\n";
+    }
+    print "Usage: $0 -d <tomcat home>| -v <version number (ie 8.0.36)>\n";
     exit 3;
 }
